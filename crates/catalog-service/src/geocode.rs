@@ -12,7 +12,7 @@ const NOMINATIM_URL: &str = "https://nominatim.openstreetmap.org/search";
 
 pub async fn geocode(place: &str) -> AppResult<Coords> {
     let client = reqwest::Client::builder()
-        .user_agent("MasterNear/1.0 (https://masternear.example; masternear@example.com)")
+        .user_agent("MasterNear/1.0")
         .build()
         .map_err(|e| AppError::internal(format!("ошибка http-клиента: {e}")))?;
 

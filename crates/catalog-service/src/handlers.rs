@@ -336,11 +336,11 @@ async fn geo_query(
             ORDER BY m.rating DESC, m.name")
     } else {
         format!("\
-            SELECT id, user_id, name, bio, city, lat, lng, rating, {dist_expr} \
-            FROM masters \
-            WHERE loc_point IS NOT NULL \
-              AND ST_DWithin(loc_point, {origin}, {radius_km} * 1000) \
-            ORDER BY rating DESC, name")
+            SELECT m.id, m.user_id, m.name, m.bio, m.city, m.lat, m.lng, m.rating, {dist_expr} \
+            FROM masters m \
+            WHERE m.loc_point IS NOT NULL \
+              AND ST_DWithin(m.loc_point, {origin}, {radius_km} * 1000) \
+            ORDER BY m.rating DESC, m.name")
     };
 
     let rows: Vec<GeoMasterRow> = sqlx::query_as::<_, GeoMasterRow>(&sql)

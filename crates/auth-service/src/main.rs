@@ -43,6 +43,7 @@ async fn main() {
         .route("/api/auth/me", get(handlers::me))
         .route("/api/auth/settings", get(handlers::settings).put(handlers::update_settings))
         .route("/api/auth/profile", get(profile::profile).put(profile::update_profile))
+        .route("/api/auth/profile/password", axum::routing::post(profile::change_password))
         .route("/health", get(|| async { "ok" }))
         .with_state(state);
 

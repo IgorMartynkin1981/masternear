@@ -253,6 +253,8 @@ input, select, textarea { font: inherit; }
 }
 .settings-block h3 { margin: 0 0 12px; font-size: 15px; }
 .settings-block input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+.pw-row { display: flex; gap: 12px; align-items: end; }
+.pw-row .field { flex: 1; margin-bottom: 0; }
 .check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: 14px; color: var(--text); }
 .check input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--brand); cursor: pointer; }
 

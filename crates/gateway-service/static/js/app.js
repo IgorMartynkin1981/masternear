@@ -671,13 +671,26 @@ function renderSettings() {
       <p class="lead">Личные данные и предпочтения. Они помогают подбирать мастеров и показывать цены в вашей валюте.</p>
 
       <div class="settings-block">
-        <h3>Личные данные</h3>
+        <h3>Учётные данные</h3>
         <div class="row">
           <div class="field"><label>Имя</label><input id="sp-name" placeholder="Как вас зовут" /></div>
+          <div class="field"><label>Email</label><input id="sp-email" type="email" placeholder="you@example.com" /></div>
+        </div>
+        <div class="pw-row">
+          <div class="field"><label>Текущий пароль</label><input id="sp-curpw" type="password" placeholder="••••••••" autocomplete="current-password" /></div>
+          <div class="field"><label>Новый пароль (от 8 символов)</label><input id="sp-newpw" type="password" placeholder="••••••••" autocomplete="new-password" /></div>
+          <div class="field" style="align-self:flex-end;"><button class="btn ghost" id="sp-changepw">Сменить пароль</button></div>
+        </div>
+        <span class="muted" id="sp-pw-status"></span>
+      </div>
+
+      <div class="settings-block">
+        <h3>Личные данные</h3>
+        <div class="row">
           <div class="field"><label>Пол</label><select id="sp-gender"></select></div>
+          <div class="field"><label>Дата рождения</label><input id="sp-dob" type="date" /></div>
         </div>
         <div class="row">
-          <div class="field"><label>Дата рождения</label><input id="sp-dob" type="date" /></div>
           <div class="field"><label>Телефон</label><input id="sp-phone" placeholder="+375 (29) 000-00-00" /></div>
         </div>
         <p class="muted">Дата рождения и пол не обязательны — укажите только то, чем готовы поделиться.</p>
@@ -719,6 +732,7 @@ function renderSettings() {
 
   const $ = (id) => document.getElementById(id);
   const nameEl = $('sp-name');
+  const emailEl = $('sp-email');
   const genderEl = $('sp-gender');
   const dobEl = $('sp-dob');
   const phoneEl = $('sp-phone');
@@ -731,6 +745,10 @@ function renderSettings() {
   const notifyEl = $('sp-notify');
   const saveBtn = $('sp-save');
   const statusEl = $('sp-status');
+  const curPwEl = $('sp-curpw');
+  const newPwEl = $('sp-newpw');
+  const changePwBtn = $('sp-changepw');
+  const pwStatusEl = $('sp-pw-status');
 
   (async () => {
     const data = await withError(() => api.profile());
@@ -744,6 +762,7 @@ function renderSettings() {
     timezoneEl.innerHTML = data.timezones.map((t) => `<option value="${t}" ${t === (p.timezone || 'Europe/Minsk') ? 'selected' : ''}>${t}</option>`).join('');
 
     nameEl.value = p.name || '';
+    emailEl.value = p.email || '';
     dobEl.value = p.date_of_birth || '';
     phoneEl.value = p.phone || '';
     countryEl.value = p.country || '';
@@ -758,6 +777,7 @@ function renderSettings() {
     btn.textContent = 'Сохраняем…';
     const body = {
       name: nameEl.value,
+      email: emailEl.value,
       gender: genderEl.value,
       date_of_birth: dobEl.value || null,
       phone: phoneEl.value,
@@ -777,9 +797,31 @@ function renderSettings() {
       setTimeout(() => (statusEl.textContent = ''), 2500);
       if (state.user) {
         state.user.name = res.profile.name;
+        state.user.email = res.profile.email;
         state.user.currency = res.profile.currency;
         renderNav();
       }
+    }
+  };
+
+  changePwBtn.onclick = async (e) => {
+    const btn = e.currentTarget;
+    if (!curPwEl.value || !newPwEl.value) {
+      pwStatusEl.textContent = 'Заполните оба поля';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Сменяем…';
+    pwStatusEl.textContent = '';
+    const res = await withError(() => api.changePassword({ current_password: curPwEl.value, new_password: newPwEl.value }));
+    btn.disabled = false;
+    btn.textContent = 'Сменить пароль';
+    if (res && res.token) {
+      localStorage.setItem('token', res.token);
+      curPwEl.value = '';
+      newPwEl.value = '';
+      pwStatusEl.textContent = 'Пароль изменён ✓';
+      setTimeout(() => (pwStatusEl.textContent = ''), 2500);
     }
   };
 }

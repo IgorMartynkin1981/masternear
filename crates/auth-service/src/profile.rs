@@ -1,6 +1,7 @@
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
+use bcrypt::hash;
 use chrono::{DateTime, NaiveDate, Utc};
 use common::AppResult;
 use common::{AppError, require_auth};
@@ -147,6 +148,7 @@ pub struct ProfileResp {
 #[derive(Default, Deserialize)]
 pub struct UpdateProfileReq {
     pub name: Option<String>,
+    pub email: Option<String>,
     pub gender: Option<String>,
     pub date_of_birth: Option<String>,
     pub phone: Option<String>,
@@ -177,6 +179,8 @@ pub async fn update_profile(
     Json(req): Json<UpdateProfileReq>,
 ) -> AppResult<Json<ProfileResp>> {
     let claims = require_auth(&headers, &state.jwt_secret)?;
+
+    let current = load_profile(&state.pool, claims.sub).await?;
 
     // Парсинг и валидация полей.
     let gender = match req.gender {
@@ -241,6 +245,39 @@ pub async fn update_profile(
         .name
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+
+    // Смена email: валидация формата и проверка уникальности.
+    let email = match req.email {
+        Some(s) => {
+            let e = s.trim().to_lowercase();
+            if e.is_empty() {
+                None
+            } else {
+                let valid = e.contains('@')
+                    && e.split('@').count() == 2
+                    && !e.starts_with('@')
+                    && !e.ends_with('@')
+                    && e.rsplit('@').next().unwrap_or_default().contains('.');
+                if !valid {
+                    return Err(AppError::bad_request("введите корректный email"));
+                }
+                if e != current.email {
+                    let taken: Option<i64> =
+                        sqlx::query_scalar("SELECT id FROM users WHERE email = $1 AND id <> $2")
+                            .bind(&e)
+                            .bind(claims.sub)
+                            .fetch_optional(&state.pool)
+                            .await?;
+                    if taken.is_some() {
+                        return Err(AppError::conflict("пользователь с таким email уже существует"));
+                    }
+                }
+                Some(e)
+            }
+        }
+        None => None,
+    };
+
     let country = req
         .country
         .map(|s| s.trim().to_string())
@@ -268,7 +305,8 @@ pub async fn update_profile(
             language      = $10, \
             currency      = COALESCE(NULLIF($11, ''), currency), \
             avatar_url    = COALESCE(NULLIF($12, ''), avatar_url), \
-            notify_email  = COALESCE($13, notify_email) \
+            notify_email  = COALESCE($13, notify_email), \
+            email         = COALESCE(NULLIF($14, ''), email) \
          WHERE id = $1",
     )
     .bind(claims.sub)
@@ -284,6 +322,7 @@ pub async fn update_profile(
     .bind(currency)
     .bind(avatar_url)
     .bind(notify_email)
+    .bind(email)
     .execute(&state.pool)
     .await?;
 
@@ -294,6 +333,64 @@ pub async fn update_profile(
     // входе новая валюта попадёт в claims.
 
     Ok(Json(resp(profile)))
+}
+
+// Смена пароля: проверка текущего пароля, валидация нового, обновление хеша
+// и перевыпуск токена, чтобы старая сессия не осталась «без пароля».
+#[derive(Deserialize)]
+pub struct PasswordReq {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Serialize)]
+pub struct PasswordResp {
+    pub token: String,
+}
+
+pub async fn change_password(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<PasswordReq>,
+) -> AppResult<Json<PasswordResp>> {
+    let claims = require_auth(&headers, &state.jwt_secret)?;
+
+    if req.new_password.len() < 8 {
+        return Err(AppError::bad_request("новый пароль должен быть не короче 8 символов"));
+    }
+    if req.new_password == req.current_password {
+        return Err(AppError::bad_request("новый пароль совпадает с текущим"));
+    }
+
+    let password_hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(claims.sub)
+        .fetch_one(&state.pool)
+        .await?;
+
+    let valid = bcrypt::verify(&req.current_password, &password_hash)
+        .map_err(|e| AppError::internal(format!("ошибка проверки пароля: {e}")))?;
+    if !valid {
+        return Err(AppError::unauthorized("текущий пароль указан неверно"));
+    }
+
+    let new_hash = hash(&req.new_password, 12)
+        .map_err(|e| AppError::internal(format!("ошибка хеширования: {e}")))?;
+
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&new_hash)
+        .bind(claims.sub)
+        .execute(&state.pool)
+        .await?;
+
+    // Перевыпускаем токен (сессия продолжается, старый инвалидируется на практике).
+    let token = common::jwt::encode_token(
+        claims.sub,
+        &claims.role,
+        &claims.currency,
+        &state.jwt_secret,
+    )?;
+
+    Ok(Json(PasswordResp { token }))
 }
 
 async fn load_profile(pool: &PgPool, user_id: i64) -> AppResult<ProfileDto> {

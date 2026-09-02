@@ -1,5 +1,5 @@
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, header};
 use axum::Json;
 use common::AppResult;
 use common::{AppError, require_auth};
@@ -247,7 +247,7 @@ fn default_sort() -> String {
     "rating".to_string()
 }
 
-async fn load_prices(pool: &PgPool, master_id: i64) -> AppResult<Vec<PriceDto>> {
+async fn load_prices(pool: &PgPool, master_id: i64, to_currency: &str) -> AppResult<Vec<PriceDto>> {
     let rows = sqlx::query_as::<_, PriceDto>("\
         SELECT mp.category_id, c.name AS category_name, mp.price \
         FROM master_price mp JOIN categories c ON c.id = mp.category_id \
@@ -255,11 +255,44 @@ async fn load_prices(pool: &PgPool, master_id: i64) -> AppResult<Vec<PriceDto>> 
         .bind(master_id)
         .fetch_all(pool)
         .await?;
-    Ok(rows)
+    let mut out = Vec::with_capacity(rows.len());
+    for mut r in rows {
+        if to_currency.to_uppercase() != "USD" {
+            r.price = common::rates::from_usd(r.price, to_currency).await?;
+        }
+        out.push(r);
+    }
+    Ok(out)
+}
+
+/// Верхний регистр или USD по умолчанию, если валюты нет/пустая.
+fn norm_currency(c: &str) -> String {
+    let c = c.trim();
+    if c.is_empty() {
+        "USD".to_string()
+    } else {
+        c.to_uppercase()
+    }
+}
+
+/// Валюту пользователя берём из токена, если он есть (иначе USD).
+fn currency_from_headers(headers: &HeaderMap, state: &AppState) -> String {
+    let Some(token) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    else {
+        return "USD".to_string();
+    };
+    match common::jwt::decode_token(token, &state.jwt_secret) {
+        Ok(claims) => norm_currency(common::jwt::claims_currency(&claims)),
+        Err(_) => "USD".to_string(),
+    }
 }
 
 pub async fn list_masters(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ListMastersQuery>,
 ) -> AppResult<Json<Vec<MasterDto>>> {
     let has_geo = query.lat.is_some() && query.lng.is_some();
@@ -267,6 +300,7 @@ pub async fn list_masters(
     if radius <= 0.0 || !radius.is_finite() {
         return Err(AppError::bad_request("радиус должен быть больше нуля"));
     }
+    let to_currency = currency_from_headers(&headers, &state);
 
     let masters: Vec<MasterDto> = if has_geo {
         geo_query(&state.pool, query.category_id, query.lat.unwrap(), query.lng.unwrap(), radius).await?
@@ -289,7 +323,7 @@ pub async fn list_masters(
 
     let mut result = masters;
     for master in &mut result {
-        master.prices = load_prices(&state.pool, master.id).await?;
+        master.prices = load_prices(&state.pool, master.id, &to_currency).await?;
     }
     attach_rating_counts(&state.pool, &mut result).await?;
     attach_photos(&state.pool, &mut result).await?;
@@ -447,7 +481,7 @@ pub async fn upsert_profile(
         .await?;
 
     let mut dto = master;
-    dto.prices = load_prices(&state.pool, dto.id).await?;
+    dto.prices = load_prices(&state.pool, dto.id, &norm_currency(&claims.currency)).await?;
     attach_rating_counts(&state.pool, std::slice::from_mut(&mut dto)).await?;
     attach_photos(&state.pool, std::slice::from_mut(&mut dto)).await?;
     Ok(Json(dto))
@@ -542,7 +576,7 @@ pub async fn my_profile(
         .ok_or_else(|| AppError::not_found("профиль мастера не заполнен"))?;
 
     let mut dto = master;
-    dto.prices = load_prices(&state.pool, dto.id).await?;
+    dto.prices = load_prices(&state.pool, dto.id, &norm_currency(&claims.currency)).await?;
     attach_rating_counts(&state.pool, std::slice::from_mut(&mut dto)).await?;
     attach_photos(&state.pool, std::slice::from_mut(&mut dto)).await?;
     Ok(Json(dto))
@@ -566,6 +600,14 @@ pub async fn set_price(
         return Err(AppError::bad_request("цена не может быть отрицательной"));
     }
 
+    let cur = norm_currency(&claims.currency);
+    // Введённая цена — в валюте пользователя; храним в базовой (USD).
+    let price_usd = if cur == "USD" {
+        req.price
+    } else {
+        common::rates::to_usd(req.price, &cur).await?
+    };
+
     let master: (i64,) = sqlx::query_as("SELECT id FROM masters WHERE user_id = $1")
         .bind(claims.sub)
         .fetch_optional(&state.pool)
@@ -584,9 +626,14 @@ pub async fn set_price(
         RETURNING category_id, (SELECT name FROM categories WHERE id = category_id) AS category_name, price")
         .bind(master.0)
         .bind(category.0)
-        .bind(req.price)
+        .bind(price_usd)
         .fetch_one(&state.pool)
         .await?;
+
+    let mut dto = dto;
+    if cur != "USD" {
+        dto.price = common::rates::from_usd(dto.price, &cur).await?;
+    }
 
     Ok(Json(dto))
 }

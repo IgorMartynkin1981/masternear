@@ -42,7 +42,13 @@ function toast(msg, isErr = false) {
 
 function money(v) {
   const n = Number(v);
-  return Number.isInteger(n) ? n + ' BYN' : n.toFixed(2) + ' BYN';
+  const cur = (state.user && state.user.currency) || 'USD';
+  const num = Number.isInteger(n) ? String(n) : n.toFixed(2);
+  return num + ' ' + cur;
+}
+
+function curCode() {
+  return (state.user && state.user.currency) || 'USD';
 }
 
 function initials(name) {
@@ -71,6 +77,7 @@ function renderNav() {
   }
   if (state.user?.role === 'master') items.push(['Панель мастера', '#/profile']);
   if (state.user?.role === 'admin') items.push(['Админ-панель', '#/admin']);
+  if (state.user) items.push(['Настройки', '#/settings']);
 
   links.innerHTML = items
     .map(([t, h, badge]) => {
@@ -128,6 +135,7 @@ function route() {
   if (path === '/chats') return renderChats();
   if (path === '/orders') return renderOrders();
   if (path === '/profile') return renderProfile();
+  if (path === '/settings') return renderSettings();
   if (path === '/admin') return renderAdmin();
   if (path === '/feedback') return renderFeedback();
   renderHome();
@@ -650,6 +658,71 @@ function renderProfile() {
   };
 }
 
+/* ------------------------- Настройки ------------------------- */
+
+function renderSettings() {
+  if (!state.user) return navigate('#/auth');
+  app.innerHTML = `
+    <section class="page">
+      <h1>Настройки</h1>
+      <p class="lead">Выберите валюту, в которой будут показываться цены и бюджеты.</p>
+      <div class="settings-wrap">
+        <div class="field">
+          <label for="s-currency">Валюта</label>
+          <select id="s-currency"></select>
+          <p class="muted" id="s-currency-name"></p>
+        </div>
+        <button class="btn primary" id="s-save" disabled>Сохранить</button>
+      </div>
+    </section>`;
+
+  const sel = $('#s-currency');
+  const nameEl = $('#s-currency-name');
+  const saveBtn = $('#s-save');
+
+  let currencies = [];
+  let current = (state.user && state.user.currency) || 'USD';
+
+  (async () => {
+    const data = await withError(() => api.settings());
+    if (!data) return;
+    currencies = data.currencies;
+    current = data.currency || 'USD';
+    sel.innerHTML = currencies
+      .map((c) => `<option value="${c.code}" ${c.code === current ? 'selected' : ''}>${c.code} — ${esc(c.name)}</option>`)
+      .join('');
+    updateName();
+    sel.onchange = () => {
+      const selected = currencies.find((c) => c.code === sel.value);
+      if (selected) nameEl.textContent = selected.name;
+      const changed = sel.value.toUpperCase() !== current.toUpperCase();
+      saveBtn.disabled = !changed;
+    };
+  })();
+
+  function updateName() {
+    const selected = currencies.find((c) => c.code === sel.value);
+    if (selected) nameEl.textContent = selected.name;
+    saveBtn.disabled = false;
+  }
+
+  saveBtn.onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Сохраняем…';
+    const res = await withError(() => api.updateSettings({ currency: sel.value }));
+    btn.disabled = false;
+    btn.textContent = 'Сохранить';
+    if (res) {
+      current = sel.value;
+      state.user.currency = res.currency;
+      saveBtn.disabled = true;
+      renderNav();
+      toast('Валюта сохранена: ' + res.currency);
+    }
+  };
+}
+
 /* ------------------------- Заказы ------------------------- */
 
 let orderCategories = [];
@@ -679,7 +752,7 @@ function renderOrders() {
                <div class="field"><label>Категория работ</label><select id="of-cat"></select></div>
                <div class="field"><label>Что нужно сделать</label><input id="of-title" placeholder="Например: починить кран на кухне" /></div>
                <div class="field"><label>Описание</label><textarea id="of-desc" placeholder="Подробности: что сломалось, когда, какой результат нужен"></textarea></div>
-               <div class="field"><label>Ваш ценник (за что готовы заплатить, BYN)</label><input id="of-budget" type="number" min="0" step="1" placeholder="0" /></div>
+               <div class="field"><label>Ваш ценник (за что готовы заплатить, ${curCode()})</label><input id="of-budget" type="number" min="0" step="1" placeholder="0" /></div>
                <div class="field"><label>Ваше место (город/адрес — чтобы подобрать мастеров поблизости)</label>
                  <div style="display:flex;gap:8px;">
                    <input id="of-place" placeholder="Например: Минск" style="flex:1;" />
@@ -895,14 +968,14 @@ function masterOrderCard(o) {
                <p>Ваше предложение: <b>${money(mine.price)}</b> ${esc(mine.comment || '')}</p>
                <details><summary>Изменить предложение</summary>
                  <form data-offer="${o.id}" class="bid-form">
-                   <input class="bid-price" type="number" min="0" step="1" value="${mine.price}" placeholder="Ваша цена, BYN" />
+                   <input class="bid-price" type="number" min="0" step="1" value="${mine.price}" placeholder="Ваша цена, ${curCode()}" />
                    <input class="bid-comment" value="${esc(mine.comment)}" placeholder="Комментарий" />
                    <button class="btn primary">Обновить</button>
                  </form>
                </details>
              </div>`
           : `<form data-offer="${o.id}" class="bid-form">
-               <input class="bid-price" type="number" min="0" step="1" required placeholder="Ваша цена, BYN" />
+               <input class="bid-price" type="number" min="0" step="1" required placeholder="Ваша цена, ${curCode()}" />
                <input class="bid-comment" placeholder="Комментарий (когда сможете приехать)" />
                <button class="btn primary">Бороться за заказ</button>
              </form>`
@@ -1248,7 +1321,7 @@ function adminOrderForm(id) {
       <h3 style="margin-bottom:14px;">Заказ #${id}</h3>
       <div class="field"><label>Заголовок</label><input id="ao-title" /></div>
       <div class="field"><label>Описание</label><textarea id="ao-desc"></textarea></div>
-      <div class="field"><label>Бюджет (BYN)</label><input id="ao-budget" type="number" step="1" min="0" /></div>
+      <div class="field"><label>Бюджет (${curCode()})</label><input id="ao-budget" type="number" step="1" min="0" /></div>
       <div class="field"><label>Статус</label>
         <select id="ao-status"><option value="open">open</option><option value="selected">selected</option><option value="closed">closed</option></select>
       </div>

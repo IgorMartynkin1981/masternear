@@ -5,20 +5,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppError;
 
+fn default_currency() -> String {
+    "USD".to_string()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: i64,
     pub role: String,
     pub exp: usize,
+    #[serde(default = "default_currency")]
+    pub currency: String,
 }
 
 pub const TOKEN_TTL_HOURS: i64 = 24;
 
-pub fn encode_token(user_id: i64, role: &str, secret: &str) -> Result<String, AppError> {
+pub fn encode_token(
+    user_id: i64,
+    role: &str,
+    currency: &str,
+    secret: &str,
+) -> Result<String, AppError> {
     let exp = (Utc::now() + Duration::hours(TOKEN_TTL_HOURS)).timestamp() as usize;
     let claims = Claims {
         sub: user_id,
         role: role.to_string(),
+        currency: currency.to_string(),
         exp,
     };
     encode(
@@ -27,6 +39,15 @@ pub fn encode_token(user_id: i64, role: &str, secret: &str) -> Result<String, Ap
         &EncodingKey::from_secret(secret.as_bytes()),
     )
     .map_err(|e| AppError::internal(format!("не удалось создать токен: {e}")))
+}
+
+/// Возвращает валюту пользователя из токена (по умолчанию USD).
+pub fn claims_currency(claims: &Claims) -> &str {
+    if claims.currency.is_empty() {
+        "USD"
+    } else {
+        &claims.currency
+    }
 }
 
 pub fn decode_token(token: &str, secret: &str) -> Result<Claims, AppError> {

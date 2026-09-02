@@ -92,7 +92,7 @@ struct OfferRow {
     created_at: DateTime<Utc>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct OfferDto {
     id: i64,
     master_id: i64,
@@ -178,28 +178,42 @@ async fn order_dto(
     row: OrderRow,
     viewer_id: i64,
     role: &str,
+    to_currency: &str,
 ) -> AppResult<OrderDto> {
     let cat_name = category_name(&state.catalog_pool, row.category_id).await?;
     let offers = load_offers(&state.pool, row.id).await?;
     let master_ids: Vec<i64> = offers.iter().map(|o| o.master_id).collect();
     let infos = master_infos(&state.catalog_pool, &master_ids).await?;
 
-    let to_dto = |o: &OfferRow| OfferDto {
-        id: o.id,
-        master_id: o.master_id,
-        master_name: infos.get(&o.master_id).map(|m| m.name.clone()),
-        master_rating: infos.get(&o.master_id).map(|m| m.rating),
-        price: o.price,
-        comment: o.comment.clone(),
-        accepted: o.accepted,
-        created_at: o.created_at,
-    };
+    async fn convert(v: f64, cur: &str) -> AppResult<f64> {
+        if cur.to_uppercase() == "USD" {
+            Ok(v)
+        } else {
+            common::rates::from_usd(v, cur).await
+        }
+    }
+
+    let mut offer_dtos = Vec::with_capacity(offers.len());
+    for o in &offers {
+        offer_dtos.push(OfferDto {
+            id: o.id,
+            master_id: o.master_id,
+            master_name: infos.get(&o.master_id).map(|m| m.name.clone()),
+            master_rating: infos.get(&o.master_id).map(|m| m.rating),
+            price: convert(o.price, to_currency).await?,
+            comment: o.comment.clone(),
+            accepted: o.accepted,
+            created_at: o.created_at,
+        });
+    }
+
+    let budget = convert(row.budget, to_currency).await?;
 
     let (my_offer, visible) = if role == "master" {
-        let mine = offers.iter().find(|o| o.master_id == viewer_id);
-        (mine.map(&to_dto), Vec::new())
+        let idx = offers.iter().position(|o| o.master_id == viewer_id);
+        (idx.map(|i| offer_dtos[i].clone()), Vec::new())
     } else if row.customer_id == viewer_id {
-        (None, offers.iter().map(&to_dto).collect())
+        (None, offer_dtos)
     } else {
         (None, Vec::new())
     };
@@ -219,7 +233,7 @@ async fn order_dto(
         category_name: cat_name,
         title: row.title,
         description: row.description,
-        budget: row.budget,
+        budget,
         status: row.status,
         lat: row.lat,
         lng: row.lng,
@@ -268,6 +282,15 @@ fn is_positive(v: f64) -> bool {
     v > 0.0 && v.is_finite()
 }
 
+fn norm_currency(c: &str) -> String {
+    let c = c.trim();
+    if c.is_empty() {
+        "USD".to_string()
+    } else {
+        c.to_uppercase()
+    }
+}
+
 async fn user_email(state: &AppState, user_id: i64) -> Option<String> {
     sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
         .bind(user_id)
@@ -286,7 +309,7 @@ async fn notify_offer_placed(state: &AppState, order: &OrderRow, price: f64) {
     };
     let html = format!(
         "<h2>Вам поступило новое предложение</h2>\
-         <p>По заказу «<b>{}</b>» мастер предложил цену <b>{} BYN</b>.</p>\
+         <p>По заказу «<b>{}</b>» мастер предложил цену <b>{} USD</b>.</p>\
          <p><a href=\"https://masternear.example\">Открыть заказ</a></p>",
         order.title.replace('<', "&lt;"),
         price
@@ -338,7 +361,7 @@ async fn notify_new_order(state: &AppState, order: &OrderRow) {
         };
         let html = format!(
             "<h2>Новый заказ поблизости</h2>\
-             <p>Появился заказ «<b>{}</b>» с бюджетом <b>{} BYN</b> по вашей категории.</p>\
+             <p>Появился заказ «<b>{}</b>» с бюджетом <b>{} USD</b> по вашей категории.</p>\
              <p><a href=\"https://masternear.example\">Посмотреть заказ</a></p>",
             order.title.replace('<', "&lt;"),
             order.budget
@@ -389,6 +412,13 @@ pub async fn create_order(
         return Err(AppError::bad_request("категория не найдена"));
     }
 
+    let cur = norm_currency(&claims.currency);
+    let budget_usd = if cur == "USD" {
+        req.budget
+    } else {
+        common::rates::to_usd(req.budget, &cur).await?
+    };
+
     let row = sqlx::query_as::<_, OrderRow>(&format!(
         "INSERT INTO orders (customer_id, category_id, title, description, budget, lat, lng) \
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {ORDER_COLUMNS}"
@@ -397,7 +427,7 @@ pub async fn create_order(
     .bind(req.category_id)
     .bind(title)
     .bind(req.description.unwrap_or_default())
-    .bind(req.budget)
+    .bind(budget_usd)
     .bind(req.lat)
     .bind(req.lng)
     .fetch_one(&state.pool)
@@ -405,7 +435,7 @@ pub async fn create_order(
 
     notify_new_order(&state, &row).await;
 
-    Ok(Json(order_dto(&state, row, claims.sub, &claims.role).await?))
+    Ok(Json(order_dto(&state, row, claims.sub, &claims.role, &cur).await?))
 }
 
 pub async fn list_orders(
@@ -434,9 +464,10 @@ pub async fn list_orders(
         .await?
     };
 
+    let cur = norm_currency(&claims.currency);
     let mut result = Vec::with_capacity(rows.len());
     for row in rows {
-        result.push(order_dto(&state, row, claims.sub, &claims.role).await?);
+        result.push(order_dto(&state, row, claims.sub, &claims.role, &cur).await?);
     }
     Ok(Json(result))
 }
@@ -470,7 +501,9 @@ pub async fn order_detail(
         return Err(AppError::not_found("заказ не найден или доступ запрещён"));
     }
 
-    Ok(Json(order_dto(&state, row, claims.sub, &claims.role).await?))
+    Ok(Json(
+        order_dto(&state, row, claims.sub, &claims.role, &norm_currency(&claims.currency)).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -505,6 +538,13 @@ pub async fn place_offer(
 
     let comment = req.comment.unwrap_or_default();
 
+    let cur = norm_currency(&claims.currency);
+    let price_usd = if cur == "USD" {
+        req.price
+    } else {
+        common::rates::to_usd(req.price, &cur).await?
+    };
+
     let offer = sqlx::query_as::<_, OfferRow>("\
         INSERT INTO offers (order_id, master_id, price, comment) VALUES ($1, $2, $3, $4) \
         ON CONFLICT (order_id, master_id) DO UPDATE \
@@ -512,7 +552,7 @@ pub async fn place_offer(
         RETURNING id, order_id, master_id, price, comment, accepted, created_at")
         .bind(order_id)
         .bind(claims.sub)
-        .bind(req.price)
+        .bind(price_usd)
         .bind(comment)
         .fetch_one(&state.pool)
         .await?;
@@ -522,12 +562,18 @@ pub async fn place_offer(
 
     notify_offer_placed(&state, &order, offer.price).await;
 
+    let price = if cur == "USD" {
+        offer.price
+    } else {
+        common::rates::from_usd(offer.price, &cur).await?
+    };
+
     Ok(Json(OfferDto {
         id: offer.id,
         master_id: offer.master_id,
         master_name: infos.get(&offer.master_id).map(|m| m.name.clone()),
         master_rating: infos.get(&offer.master_id).map(|m| m.rating),
-        price: offer.price,
+        price,
         comment: offer.comment,
         accepted: offer.accepted,
         created_at: offer.created_at,
@@ -596,5 +642,7 @@ pub async fn select_offer(
         notify_order_selected(&state, &updated, master_id).await;
     }
 
-    Ok(Json(order_dto(&state, updated, claims.sub, &claims.role).await?))
+    Ok(Json(
+        order_dto(&state, updated, claims.sub, &claims.role, &norm_currency(&claims.currency)).await?,
+    ))
 }

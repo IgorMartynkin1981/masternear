@@ -7,6 +7,8 @@ mod state;
 
 mod handlers;
 
+mod currencies;
+
 use state::AppState;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8081";
@@ -37,6 +39,7 @@ async fn main() {
         .route("/api/auth/register", post(handlers::register))
         .route("/api/auth/login", post(handlers::login))
         .route("/api/auth/me", get(handlers::me))
+        .route("/api/auth/settings", get(handlers::settings).put(handlers::update_settings))
         .route("/health", get(|| async { "ok" }))
         .with_state(state);
 

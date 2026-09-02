@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
 use crate::state::AppState;
+use crate::currencies;
 
 const BCRYPT_COST: u32 = 12;
 
@@ -19,11 +20,15 @@ pub async fn init_schema(pool: &PgPool) -> AppResult<()> {
             email         TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             role          TEXT NOT NULL CHECK (role IN ('customer', 'master', 'admin')),
+            currency      TEXT NOT NULL DEFAULT 'USD',
             created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
         )"#,
     )
     .execute(pool)
     .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'USD'")
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -47,6 +52,7 @@ pub struct UserDto {
     pub name: String,
     pub email: String,
     pub role: String,
+    pub currency: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -79,7 +85,7 @@ pub async fn register(
 
     let result = sqlx::query_as::<_, UserDto>("\
         INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) \
-        RETURNING id, name, email, role, created_at")
+        RETURNING id, name, email, role, currency, created_at")
         .bind(name)
         .bind(&email)
         .bind(&password_hash)
@@ -95,7 +101,7 @@ pub async fn register(
         Err(e) => return Err(e.into()),
     };
 
-    let token = common::jwt::encode_token(user.id, &user.role, &state.jwt_secret)?;
+    let token = common::jwt::encode_token(user.id, &user.role, &user.currency, &state.jwt_secret)?;
     Ok(Json(AuthResp { token, user }))
 }
 
@@ -106,7 +112,7 @@ pub async fn login(
     let email = req.email.trim().to_lowercase();
 
     let row = sqlx::query_as::<_, UserDto>("\
-        SELECT id, name, email, role, created_at \
+        SELECT id, name, email, role, currency, created_at \
         FROM users WHERE email = $1")
         .bind(&email)
         .fetch_optional(&state.pool)
@@ -125,7 +131,7 @@ pub async fn login(
         return Err(AppError::unauthorized("неверный email или пароль"));
     }
 
-    let token = common::jwt::encode_token(user.id, &user.role, &state.jwt_secret)?;
+    let token = common::jwt::encode_token(user.id, &user.role, &user.currency, &state.jwt_secret)?;
     Ok(Json(AuthResp { token, user }))
 }
 
@@ -136,10 +142,62 @@ pub async fn me(
     let claims = require_auth(&headers, &state.jwt_secret)?;
 
     let user = sqlx::query_as::<_, UserDto>("\
-        SELECT id, name, email, role, created_at FROM users WHERE id = $1")
+        SELECT id, name, email, role, currency, created_at FROM users WHERE id = $1")
         .bind(claims.sub)
         .fetch_one(&state.pool)
         .await?;
 
     Ok(Json(user))
+}
+
+#[derive(Serialize)]
+pub struct SettingsResp {
+    pub currency: String,
+    pub currencies: Vec<currencies::Currency>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateSettingsReq {
+    pub currency: String,
+}
+
+pub async fn settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<Json<SettingsResp>> {
+    let claims = require_auth(&headers, &state.jwt_secret)?;
+
+    let currency: String = sqlx::query_scalar("SELECT currency FROM users WHERE id = $1")
+        .bind(claims.sub)
+        .fetch_one(&state.pool)
+        .await?;
+
+    Ok(Json(SettingsResp {
+        currency,
+        currencies: currencies::ALL.to_vec(),
+    }))
+}
+
+pub async fn update_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<UpdateSettingsReq>,
+) -> AppResult<Json<SettingsResp>> {
+    let claims = require_auth(&headers, &state.jwt_secret)?;
+
+    let code = req.currency.trim().to_uppercase();
+    if currencies::find(&code).is_none() {
+        return Err(AppError::bad_request(format!("неизвестная валюта: {code}")));
+    }
+
+    sqlx::query("UPDATE users SET currency = $1 WHERE id = $2")
+        .bind(&code)
+        .bind(claims.sub)
+        .execute(&state.pool)
+        .await?;
+
+    Ok(Json(SettingsResp {
+        currency: code,
+        currencies: currencies::ALL.to_vec(),
+    }))
 }

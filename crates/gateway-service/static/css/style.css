@@ -243,6 +243,19 @@ input, select, textarea { font: inherit; }
 .row { display: flex; gap: 12px; align-items: end; }
 .row .field { flex: 1; margin-bottom: 12px; }
 
+/* ---------- Настройки профиля ---------- */
+.settings-block {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+.settings-block h3 { margin: 0 0 12px; font-size: 15px; }
+.settings-block input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+.check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: 14px; color: var(--text); }
+.check input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--brand); cursor: pointer; }
+
 /* ---------- Заказы ---------- */
 .order-card { display: block; }
 .order-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }

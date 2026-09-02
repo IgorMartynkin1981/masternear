@@ -12,6 +12,7 @@ use sqlx::{FromRow, PgPool};
 use crate::state::AppState;
 
 pub async fn init_schema(pool: &PgPool) -> AppResult<()> {
+
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS orders (
             id                BIGSERIAL PRIMARY KEY,

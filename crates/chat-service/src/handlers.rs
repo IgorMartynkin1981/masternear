@@ -295,7 +295,7 @@ async fn notify_message(
         .bind(sender_id)
         .fetch_optional(&state.auth_pool)
         .await
-        .unwrap_or_else(|_| None)
+        .unwrap_or(None)
         .unwrap_or_else(|| "Пользователь".to_string());
 
     let html = common::email::message_email_html(&sender_name, text);

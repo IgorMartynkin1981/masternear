@@ -366,7 +366,7 @@ async fn notify_new_order(state: &AppState, order: &OrderRow) {
             order.title.replace('<', "&lt;"),
             order.budget
         );
-        let subject = format!("MasterNear: новый заказ по вашей категории");
+        let subject = "MasterNear: новый заказ по вашей категории".to_string();
         if let Err(e) =
             common::email::send_email(&state.notification_url, &email, &subject, &html).await
         {

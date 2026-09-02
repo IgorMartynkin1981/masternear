@@ -1,0 +1,15 @@
+[package]
+name = "gateway-service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+axum = { workspace = true, features = ["ws"] }
+dotenvy.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+tokio-tungstenite = "0.26"
+tower-http = { version = "0.6", features = ["fs"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true

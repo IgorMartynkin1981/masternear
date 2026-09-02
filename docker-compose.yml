@@ -1,0 +1,137 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: masternear-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: crates/auth-service/Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/auth_db
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      SERVER_ADDR: 0.0.0.0:8081
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  catalog-service:
+    build:
+      context: .
+      dockerfile: crates/catalog-service/Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/catalog_db
+      UPLOAD_DIR: /app/uploads
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      SERVER_ADDR: 0.0.0.0:8082
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  chat-service:
+    build:
+      context: .
+      dockerfile: crates/chat-service/Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/chat_db
+      AUTH_DATABASE_URL: postgres://postgres:postgres@db:5432/auth_db
+      NOTIFICATION_SERVICE_URL: http://notification-service:8086
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      SERVER_ADDR: 0.0.0.0:8083
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: crates/notification-service/Dockerfile
+    environment:
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-noreply@masternear.example}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-MasterNear}
+      SERVER_ADDR: 0.0.0.0:8086
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  order-service:
+    build:
+      context: .
+      dockerfile: crates/order-service/Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/orders_db
+      CATALOG_DATABASE_URL: postgres://postgres:postgres@db:5432/catalog_db
+      AUTH_DATABASE_URL: postgres://postgres:postgres@db:5432/auth_db
+      NOTIFICATION_SERVICE_URL: http://notification-service:8086
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      SERVER_ADDR: 0.0.0.0:8084
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: crates/gateway-service/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_ADDR: 0.0.0.0:8080
+      STATIC_DIR: /app/static
+      AUTH_SERVICE_URL: http://auth-service:8081
+      CATALOG_SERVICE_URL: http://catalog-service:8082
+      CHAT_SERVICE_URL: http://chat-service:8083
+      ORDER_SERVICE_URL: http://order-service:8084
+      ADMIN_SERVICE_URL: http://admin-service:8085
+    depends_on:
+      - auth-service
+      - catalog-service
+      - chat-service
+      - order-service
+      - admin-service
+    restart: unless-stopped
+
+  admin-service:
+    build:
+      context: .
+      dockerfile: crates/admin-service/Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/admin_db
+      AUTH_DATABASE_URL: postgres://postgres:postgres@db:5432/auth_db
+      CATALOG_DATABASE_URL: postgres://postgres:postgres@db:5432/catalog_db
+      ORDERS_DATABASE_URL: postgres://postgres:postgres@db:5432/orders_db
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      SERVER_ADDR: 0.0.0.0:8085
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  uploads:

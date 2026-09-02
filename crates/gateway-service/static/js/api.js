@@ -29,6 +29,9 @@ export const api = {
   me: () => request('/auth/me'),
   settings: () => request('/auth/settings'),
   updateSettings: (body) => request('/auth/settings', { method: 'PUT', body: JSON.stringify(body) }),
+  profile: () => request('/auth/profile'),
+  updateProfile: (body) => request('/auth/profile', { method: 'PUT', body: JSON.stringify(body) }),
+  changePassword: (body) => request('/auth/profile/password', { method: 'POST', body: JSON.stringify(body) }),
 
   categories: () => request('/categories'),
   masters: (params) => {

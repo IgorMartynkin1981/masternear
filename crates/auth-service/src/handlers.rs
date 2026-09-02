@@ -29,6 +29,39 @@ pub async fn init_schema(pool: &PgPool) -> AppResult<()> {
     sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'USD'")
         .execute(pool)
         .await?;
+    // Профиль аккаунта (персональные данные и предпочтения пользователя).
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT 'unspecified' \
+                 CHECK (gender IN ('unspecified','male','female','other'))")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS country TEXT")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS city TEXT")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS address TEXT")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT NOT NULL DEFAULT 'ru' \
+                 CHECK (language IN ('ru','en'))")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_email BOOLEAN NOT NULL DEFAULT true")
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

@@ -9,6 +9,8 @@ mod handlers;
 
 mod currencies;
 
+mod profile;
+
 use state::AppState;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:8081";
@@ -40,6 +42,8 @@ async fn main() {
         .route("/api/auth/login", post(handlers::login))
         .route("/api/auth/me", get(handlers::me))
         .route("/api/auth/settings", get(handlers::settings).put(handlers::update_settings))
+        .route("/api/auth/profile", get(profile::profile).put(profile::update_profile))
+        .route("/api/auth/profile/password", axum::routing::post(profile::change_password))
         .route("/health", get(|| async { "ok" }))
         .with_state(state);
 

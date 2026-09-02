@@ -658,67 +658,170 @@ function renderProfile() {
   };
 }
 
-/* ------------------------- Настройки ------------------------- */
+/* ------------------------- Настройки профиля ------------------------- */
+
+const GENDER_LABELS = { unspecified: 'Не указано', male: 'Мужской', female: 'Женский', other: 'Другое' };
+const LANGUAGE_LABELS = { ru: 'Русский', en: 'English' };
 
 function renderSettings() {
   if (!state.user) return navigate('#/auth');
   app.innerHTML = `
     <section class="page">
-      <h1>Настройки</h1>
-      <p class="lead">Выберите валюту, в которой будут показываться цены и бюджеты.</p>
-      <div class="settings-wrap">
-        <div class="field">
-          <label for="s-currency">Валюта</label>
-          <select id="s-currency"></select>
-          <p class="muted" id="s-currency-name"></p>
+      <h1>Настройки аккаунта</h1>
+      <p class="lead">Личные данные и предпочтения. Они помогают подбирать мастеров и показывать цены в вашей валюте.</p>
+
+      <div class="settings-block">
+        <h3>Учётные данные</h3>
+        <div class="row">
+          <div class="field"><label>Имя</label><input id="sp-name" placeholder="Как вас зовут" /></div>
+          <div class="field"><label>Email</label><input id="sp-email" type="email" placeholder="you@example.com" /></div>
         </div>
-        <button class="btn primary" id="s-save" disabled>Сохранить</button>
+        <div class="pw-row">
+          <div class="field"><label>Текущий пароль</label><input id="sp-curpw" type="password" placeholder="••••••••" autocomplete="current-password" /></div>
+          <div class="field"><label>Новый пароль (от 8 символов)</label><input id="sp-newpw" type="password" placeholder="••••••••" autocomplete="new-password" /></div>
+          <div class="field" style="align-self:flex-end;"><button class="btn ghost" id="sp-changepw">Сменить пароль</button></div>
+        </div>
+        <span class="muted" id="sp-pw-status"></span>
+      </div>
+
+      <div class="settings-block">
+        <h3>Личные данные</h3>
+        <div class="row">
+          <div class="field"><label>Пол</label><select id="sp-gender"></select></div>
+          <div class="field"><label>Дата рождения</label><input id="sp-dob" type="date" /></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Телефон</label><input id="sp-phone" placeholder="+375 (29) 000-00-00" /></div>
+        </div>
+        <p class="muted">Дата рождения и пол не обязательны — укажите только то, чем готовы поделиться.</p>
+      </div>
+
+      <div class="settings-block">
+        <h3>Локация</h3>
+        <div class="row">
+          <div class="field"><label>Страна</label><input id="sp-country" placeholder="Беларусь" /></div>
+          <div class="field"><label>Город</label><input id="sp-city" placeholder="Минск" /></div>
+        </div>
+        <div class="field"><label>Адрес (необязательно)</label><input id="sp-address" placeholder="Улица, дом, квартира" /></div>
+      </div>
+
+      <div class="settings-block">
+        <h3>Предпочтения</h3>
+        <div class="row">
+          <div class="field"><label>Язык интерфейса</label><select id="sp-language"></select></div>
+          <div class="field"><label>Валюта цен</label><select id="sp-currency"></select></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Часовой пояс</label><select id="sp-timezone"></select></div>
+        </div>
+      </div>
+
+      <div class="settings-block">
+        <h3>Уведомления</h3>
+        <label class="check">
+          <input id="sp-notify" type="checkbox" />
+          <span>Получать уведомления на email (новые заказы, предложения, чат)</span>
+        </label>
+      </div>
+
+      <div class="field" style="margin:20px 0;">
+        <button class="btn primary" id="sp-save">Сохранить</button>
+        <span class="muted" id="sp-status" style="margin-left:12px;"></span>
       </div>
     </section>`;
 
-  const sel = $('#s-currency');
-  const nameEl = $('#s-currency-name');
-  const saveBtn = $('#s-save');
-
-  let currencies = [];
-  let current = (state.user && state.user.currency) || 'USD';
+  const $ = (id) => document.getElementById(id);
+  const nameEl = $('sp-name');
+  const emailEl = $('sp-email');
+  const genderEl = $('sp-gender');
+  const dobEl = $('sp-dob');
+  const phoneEl = $('sp-phone');
+  const countryEl = $('sp-country');
+  const cityEl = $('sp-city');
+  const addressEl = $('sp-address');
+  const languageEl = $('sp-language');
+  const currencyEl = $('sp-currency');
+  const timezoneEl = $('sp-timezone');
+  const notifyEl = $('sp-notify');
+  const saveBtn = $('sp-save');
+  const statusEl = $('sp-status');
+  const curPwEl = $('sp-curpw');
+  const newPwEl = $('sp-newpw');
+  const changePwBtn = $('sp-changepw');
+  const pwStatusEl = $('sp-pw-status');
 
   (async () => {
-    const data = await withError(() => api.settings());
+    const data = await withError(() => api.profile());
     if (!data) return;
-    currencies = data.currencies;
-    current = data.currency || 'USD';
-    sel.innerHTML = currencies
-      .map((c) => `<option value="${c.code}" ${c.code === current ? 'selected' : ''}>${c.code} — ${esc(c.name)}</option>`)
-      .join('');
-    updateName();
-    sel.onchange = () => {
-      const selected = currencies.find((c) => c.code === sel.value);
-      if (selected) nameEl.textContent = selected.name;
-      const changed = sel.value.toUpperCase() !== current.toUpperCase();
-      saveBtn.disabled = !changed;
-    };
-  })();
+    const p = data.profile;
 
-  function updateName() {
-    const selected = currencies.find((c) => c.code === sel.value);
-    if (selected) nameEl.textContent = selected.name;
-    saveBtn.disabled = false;
-  }
+    // Гендера, языки, валюты, часовые пояса.
+    genderEl.innerHTML = data.genders.map((g) => `<option value="${g}" ${g === p.gender ? 'selected' : ''}>${GENDER_LABELS[g] || g}</option>`).join('');
+    languageEl.innerHTML = data.languages.map((l) => `<option value="${l}" ${l === p.language ? 'selected' : ''}>${LANGUAGE_LABELS[l] || l}</option>`).join('');
+    currencyEl.innerHTML = data.currencies.map((c) => `<option value="${c.code}" ${c.code === p.currency ? 'selected' : ''}>${c.code} — ${esc(c.name)}</option>`).join('');
+    timezoneEl.innerHTML = data.timezones.map((t) => `<option value="${t}" ${t === (p.timezone || 'Europe/Minsk') ? 'selected' : ''}>${t}</option>`).join('');
+
+    nameEl.value = p.name || '';
+    emailEl.value = p.email || '';
+    dobEl.value = p.date_of_birth || '';
+    phoneEl.value = p.phone || '';
+    countryEl.value = p.country || '';
+    cityEl.value = p.city || '';
+    addressEl.value = p.address || '';
+    notifyEl.checked = !!p.notify_email;
+  })();
 
   saveBtn.onclick = async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
     btn.textContent = 'Сохраняем…';
-    const res = await withError(() => api.updateSettings({ currency: sel.value }));
+    const body = {
+      name: nameEl.value,
+      email: emailEl.value,
+      gender: genderEl.value,
+      date_of_birth: dobEl.value || null,
+      phone: phoneEl.value,
+      country: countryEl.value,
+      city: cityEl.value,
+      address: addressEl.value,
+      language: languageEl.value,
+      currency: currencyEl.value,
+      timezone: timezoneEl.value,
+      notify_email: notifyEl.checked,
+    };
+    const res = await withError(() => api.updateProfile(body));
     btn.disabled = false;
     btn.textContent = 'Сохранить';
     if (res) {
-      current = sel.value;
-      state.user.currency = res.currency;
-      saveBtn.disabled = true;
-      renderNav();
-      toast('Валюта сохранена: ' + res.currency);
+      statusEl.textContent = 'Сохранено ✓';
+      setTimeout(() => (statusEl.textContent = ''), 2500);
+      if (state.user) {
+        state.user.name = res.profile.name;
+        state.user.email = res.profile.email;
+        state.user.currency = res.profile.currency;
+        renderNav();
+      }
+    }
+  };
+
+  changePwBtn.onclick = async (e) => {
+    const btn = e.currentTarget;
+    if (!curPwEl.value || !newPwEl.value) {
+      pwStatusEl.textContent = 'Заполните оба поля';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Сменяем…';
+    pwStatusEl.textContent = '';
+    const res = await withError(() => api.changePassword({ current_password: curPwEl.value, new_password: newPwEl.value }));
+    btn.disabled = false;
+    btn.textContent = 'Сменить пароль';
+    if (res && res.token) {
+      localStorage.setItem('token', res.token);
+      curPwEl.value = '';
+      newPwEl.value = '';
+      pwStatusEl.textContent = 'Пароль изменён ✓';
+      setTimeout(() => (pwStatusEl.textContent = ''), 2500);
     }
   };
 }
